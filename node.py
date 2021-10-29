@@ -4,6 +4,7 @@ import json
 import time  # bruh
 import asyncio
 
+
 # subscribes to the topic if not subscribed else runs the function
 def subscribe(topic: str):
     assert topic.find(" ") == -1, f"topic \"{topic}\" should not contain spaces"
@@ -54,7 +55,6 @@ def run_io_listener(q, port: tuple):
     print(f"listener bound to {port}")
     while True:
         data, addr = listener.recvfrom(1024)  # 1024 bytes, addr is not used here
-        print(f"listener received: {data}")
         q.put(data)
 
 
@@ -247,7 +247,6 @@ class MasterNode(Node):
         self.processes.append(sender)
         listener.start()
         sender.start()
-        # loops
         # sending data to individual processes (async)
         while self.is_alive:
             if not self.to_process.empty():
@@ -282,13 +281,12 @@ class MasterNode(Node):
     @subscribe("__sub__")
     def _sub(self, data, port):
         # subscriptions
-        print(f"setting up subscription data for {data}")
+        print(f"setting up subscription data for {port}")
         for t in data:
             try:
                 self.topics[t].append(port)
             except KeyError:
                 self.topics[t] = [port]
-        print(f"current subs: {self.get_all_subs()}")
 
 
 def main():
