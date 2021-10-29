@@ -53,12 +53,10 @@ def is_dunder(x: str):
 def run_io_listener(q, port: tuple):
     listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     listener.bind(get_address(port))
-    i = 0
     print(f"listener bound to {port}")
     while True:
         data, addr = listener.recvfrom(1024)  # 1024 bytes, addr is not used here
         print(f"listener received: {data}")
-        i += 1
         q.put(data)
 
 
