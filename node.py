@@ -3,8 +3,6 @@ import socket  # for inter process communication
 import json
 import time  # bruh
 import asyncio
-import serial
-
 
 # subscribes to the topic if not subscribed else runs the function
 def subscribe(topic: str):
