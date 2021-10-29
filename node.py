@@ -73,12 +73,6 @@ def run_io_sender(to_send, port: tuple):
             else:
                 writer.sendto(msg[0], get_address(msg[1]))
 
-def run_serial_listener(q, port):
-    listener = serial.Serial(port=port[1], baudrate=115200, timeout=.1)
-    while True:
-        data = listener.readline()
-        q.put(data)
-
 
 # main node class
 class Node:
