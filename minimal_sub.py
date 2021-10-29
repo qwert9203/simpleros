@@ -6,8 +6,9 @@ class MinimalSub(Node):
     def __init__(self, name, **kwargs):
         super().__init__(name, **kwargs)
 
+    # subscribes to "test_topic"
     @subscribe("test_topic")
-    def test_sub(self, data, port):
+    def test_sub(self, data, port):  # function to run whenever this node receives data from the topic "test_topic"
         print(f"received {data}")
 
 
