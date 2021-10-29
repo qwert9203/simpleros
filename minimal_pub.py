@@ -6,8 +6,9 @@ class MinimalPub(Node):
     def __init__(self, name, **kwargs):
         super().__init__(name, **kwargs)
 
+    # creates a loop that runs every 1000 ms
     @loop(1000)
-    def test_pub(self):
+    def test_pub(self):  # function to run every 1000 ms
         self.publish("test_topic", "test_data")
 
 
