@@ -50,16 +50,10 @@ class Foo(LocalNode):
 Publishing data to a topic
 
 ```python
-
-class Foo(LocalNode):
-
-    def __init__(self, name):
-        super().__init__(name)
         
-        
-    @subscribe("topic_name")
+    @subscribe("topic_name_2")
     def any_name_you_want(self, data, port)
-        self.publish("topic_name_2", "I received data!")
+        self.publish("topic_name", "I received data!")
 
 ```
 
