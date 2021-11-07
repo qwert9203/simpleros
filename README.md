@@ -1,8 +1,13 @@
 # simpleros
 ROS but it's (will be) a python library
 
+
+This "library" has a similar architecture to ROS1, but the middleware layer is mostly handled by python itself. 
+
+
 ## "installation"
 copy node.py 
+
 
 ## Introduction
 
@@ -52,7 +57,7 @@ Publishing data to a topic
 ```python
         
     @subscribe("topic_name_2")
-    def any_name_you_want(self, data, port)
+    def any_name_you_want_2(self, data, port)
         self.publish("topic_name", "I received data!")
 
 ```
@@ -61,11 +66,9 @@ Publishing data to a topic
 Adding a loop to the node
 
 ```python
-
-    #  in the node object
     
     @loop(1000)
-    def any_name_you_want(self)
+    def any_name_you_want_3(self)
         self.publish("topic_name", time.time())
 
 ```
