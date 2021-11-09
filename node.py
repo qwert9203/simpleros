@@ -1,13 +1,17 @@
 import multiprocessing  # for intra process communication
 import socket  # for inter process communication
-import json
-import subprocess
 import asyncio
 import time
 from contextlib import closing
+import json
 
 
 def find_free_port():
+    """ Finds a free port on the local device using sockets.
+
+    :return: a free port number on the local device
+    """
+
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(('', 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -89,6 +93,10 @@ def run_io_sender(to_send, port: tuple):
 
 # main node class
 class Node:
+    """ The main object
+
+
+    """
 
     def __init__(self, name, recv_port=None, send_port=None, master_port=None):
         if send_port is None:
@@ -101,7 +109,6 @@ class Node:
         self.sendport = send_port  # port for sending data
         self.master_port = master_port  # port to send data to
         self.subscriptions = {}  # stores subscription data and what methods to call
-        self.services = {}  # stores services
         self.to_send = multiprocessing.Manager().Queue()  # for transferring data from publish() to sender
         self.to_process = multiprocessing.Manager().Queue()  # for transferring data from listener to run()
         self.to_publish = multiprocessing.Manager().Queue()  # for transferring data from loops to publish()
@@ -127,11 +134,17 @@ class Node:
         try:
             self._on_receive(topic, data, addr, recp)
         except KeyError:
-            print(f"{self.name} is not subscriber to {topic}!")
+            print(f"{self.name} is not subscribed to {topic}!")
 
     # to be called whenever this node receives any data
     def _on_receive(self, topic, data, port, recp):
         self.subscriptions[topic](data, port)
+
+    def _callback(self, topic, data, port):
+        try:
+            self.subscriptions[topic](data, port)
+        except:
+            print(f"error executing {topic}, {self.name}")
 
     # returns all subscriber callback method names
     def _get_sub_cb(self):
@@ -181,7 +194,7 @@ class Node:
         self._add_loop()
         # echoes master
         while True:
-            self.publish("__echo__", self.master_port, recipients=self.master_port)
+            self.publish("__echo__", self.name, recipients="master")
             await asyncio.sleep(1)
             if not self.to_process.empty():
                 msg = self.to_process.get()
@@ -192,7 +205,7 @@ class Node:
             else:
                 break
 
-        self.publish("__sub__", subs, recipients=self.master_port)
+        self.publish("__sub__", subs, recipients="master")
         # sending data to individual processes (async)
         for loop in self.loops:
             asyncio.create_task(self._timer(loop["time"], loop["func"]))
@@ -200,7 +213,7 @@ class Node:
             if not self.to_process.empty():
                 msg = self.to_process.get()
                 self._handle_msg(msg)
-            await asyncio.sleep(0)  # 1hz?
+            await asyncio.sleep(0)
 
     # returns: -1 = error, 0 = already subbed, 1 = first time sub
     def sub(self, topic, cbfunc_name: str):
@@ -266,6 +279,24 @@ class MasterNode(Node):
         super().__init__("master", recv_port=[get_local_ip(), "12222"], send_port=[get_local_ip(), "22222"],
                          master_port="1")
         self.topics = {}  # {topic names: subscriber id: str}
+        self.nodenames = {}
+
+    def translate_recp(self, recp, topic):
+        """ translates recipients names to their ips
+
+        :return:
+        """
+        if recp == self.name:
+            return self.name
+        if recp is list:
+            return filter(lambda x: x is not None, [self.translate_recp(x, topic) for x in recp])
+        else:
+            if is_dunder(recp):
+                return recp
+            try:
+                return self.nodenames[recp]
+            except KeyError:
+                print(f"node {recp} does not exist!")
 
     # initializes the node completely (sends self subscriptions to master)
     # then starts sender and listener processes
@@ -284,29 +315,26 @@ class MasterNode(Node):
             if not self.to_process.empty():
                 msg = self.to_process.get()
                 self._handle_msg(msg)
-            await asyncio.sleep(0)
+            # await asyncio.sleep(0)
 
     def _on_receive(self, topic, data, port, recp):
-        if recp == "__subs__":  # send msg to all subscribers, default action
+        r = self.translate_recp(recp, topic)
+        if r == self.name:  # self is the only recipient
+            self._callback(topic, data, port)
+        elif r == "__subs__":
             if self.topics.get(topic):
-                self.publish(topic, data, port, recipients=self.topics[topic])
+                self.publish(topic, data, port=port, recipients=self.topics[topic])
             else:
-                print(f"{topic} has no recipients!")
-            if topic in self.subscriptions.keys():  # master node is subscribed to that topic and should react
-                self.subscriptions[topic](data, port)
-        elif recp == "__all__":  # all nodes excluding master
-            self.publish(topic, data, port)
-        elif recp == "__global__":  # all nodes including master
-            self.publish(topic, data, port)
-            self.subscriptions[topic](data, port)
+                print(f"topic {topic} has no recipients!")
+            if self.subscriptions.get(topic):
+                self._callback(topic, data, port)
+        elif r == "__all__":  # master only passes on the message
+            self.publish(topic, data, port=port, recipients=self.get_all_subs())
+        elif r == "__global__":
+            self.publish(topic, data, port=port, recipients=self.get_all_subs())
+            self._callback(topic, data, port)
         else:
-            if self.recvport == recp:  # master is the sole recipient
-                self.subscriptions[topic](data, port)
-            else:
-                if self.recvport in recp:
-                    self.subscriptions[topic](data, port)
-                    recp.remove(self.recvport)
-                self.publish(topic, data, port, recipients=recp)
+            self.publish(topic, data, port=port, recipients=r)
 
     # returns all nodes that are subscribed to any topic
     def get_all_subs(self):
@@ -345,10 +373,13 @@ class MasterNode(Node):
             if topic in data:
                 ports.remove(port)
 
+    @subscribe("__echo__")
+    def _echo(self, data, port):
+        self.publish("__echoresp__", data, recipients=port)
+        self.nodenames[data] = port
+
 
 def main():
-    # local devices
-    # master of local devices : 12222 recv, 22222 send
     master = MasterNode()
     master.run()
 
