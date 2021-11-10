@@ -1,9 +1,35 @@
 import multiprocessing  # for intra process communication
 import socket  # for inter process communication
 import asyncio
+import sys
 import time
 from contextlib import closing
 import json
+import queue
+import logging
+import logging.handlers
+
+# TODO: add color code customization
+COLORS = {"DEBUG": 92,
+          "INFO": 39,
+          "WARNING": 33,
+          "ERROR": 35,
+          "CRITICAL": 31
+          }
+
+
+class ColorFormatter(logging.Formatter):
+
+    def __init__(self, msg, use_color=True):
+        logging.Formatter.__init__(self, msg)
+        self.use_color = use_color
+
+    def format(self, record):
+        levelname = record.levelname
+        if self.use_color and levelname in COLORS:
+            levelname_color = "\033[%dm" % COLORS[levelname] + levelname + "\033[0m"
+            record.levelname = levelname_color
+        return logging.Formatter.format(self, record)
 
 
 def find_free_port():
@@ -31,12 +57,12 @@ def subscribe(topic: str):
                 assert __val__ == "subscribe"
             x = args[0].sub(topic, func.__name__)  # tries to subscribe
             if x == -1:  # cannot subscribe
-                print("cannot subscribe!")
+                args[0].warning("cannot subscribe!")
             elif x == 0:  # already subscribed
                 func(*args, **kwargs)
             else:  # not subscribed, does not run function
                 if not is_dunder(topic):
-                    print(f"{args[0].name} subscribed to {topic}")
+                    args[0].print(f"{args[0].name} subscribed to {topic}")
 
         return w
 
@@ -98,7 +124,7 @@ class Node:
 
     """
 
-    def __init__(self, name, recv_port=None, send_port=None, master_port=None):
+    def __init__(self, name: str, recv_port=None, send_port=None, master_port=None):
         if send_port is None:
             send_port = [get_local_ip(), find_free_port()]
         if recv_port is None:
@@ -111,11 +137,22 @@ class Node:
         self.subscriptions = {}  # stores subscription data and what methods to call
         self.to_send = multiprocessing.Manager().Queue()  # for transferring data from publish() to sender
         self.to_process = multiprocessing.Manager().Queue()  # for transferring data from listener to run()
-        self.to_publish = multiprocessing.Manager().Queue()  # for transferring data from loops to publish()
         self.processes = []
         self.is_alive = True
         self.connected = False
         self.loops = []
+        # logging
+        self.msg_queue = queue.Queue(-1)  # no limit on size
+        self.msg_queue_handler = logging.handlers.QueueHandler(self.msg_queue)
+        self.msg_handler = logging.StreamHandler(sys.stdout)
+        self.msg_listener = logging.handlers.QueueListener(self.msg_queue, self.msg_handler)
+        self.logger = logging.getLogger(self.name)
+        self.logger.addHandler(self.msg_queue_handler)
+        # TODO: add customization to formatters
+        self.logger.setLevel(logging.DEBUG)
+        self.formatter = ColorFormatter('[%(name)s] %(levelname)s: %(message)s')
+        self.msg_handler.setFormatter(self.formatter)
+        self.msg_listener.start()
 
     def _handle_msg(self, r):
         # decoding
@@ -126,25 +163,25 @@ class Node:
             addr = result["addr"]
             recp = result["recp"]
         except json.decoder.JSONDecodeError:
-            print("cannot decode!")
+            self.error("cannot decode!")
             topic = "__error__"
             data = "error"
             addr = ("error", "error")
             recp = ""
-        try:
-            self._on_receive(topic, data, addr, recp)
-        except KeyError:
-            print(f"{self.name} is not subscribed to {topic}!")
+        self._on_receive(topic, data, addr, recp)
 
     # to be called whenever this node receives any data
     def _on_receive(self, topic, data, port, recp):
-        self.subscriptions[topic](data, port)
+        if self.is_subscribed(topic):
+            self._callback(topic, data, port)
+        else:
+            self.warning(f"{self.name} is not subscribed to {topic}!")
 
     def _callback(self, topic, data, port):
         try:
             self.subscriptions[topic](data, port)
         except:
-            print(f"error executing {topic}, {self.name}")
+            self.error(f"error executing {topic}, {self.name}")
 
     # returns all subscriber callback method names
     def _get_sub_cb(self):
@@ -176,7 +213,7 @@ class Node:
     # then starts sender and listener processes
     # finally starts the main loop of parsing information in to_process to _on_receive
     async def _run(self):
-        print(f"{self.name} has an id of {id(self)}")
+        self.print(f"{self.name} has an id of {id(self)}")
         # adds subscriptions to self
         self._add_sub()
         # creates connection to master node
@@ -201,7 +238,7 @@ class Node:
                 self._handle_msg(msg)
                 await asyncio.sleep(1)
             if not self.connected:
-                print("could not connect to master, trying again in 1 second")
+                self.warning("could not connect to master, trying again in 1 second")
             else:
                 break
 
@@ -224,8 +261,11 @@ class Node:
                 self.subscriptions[topic] = getattr(self, cbfunc_name)
                 return 1
         except AttributeError as e:
-            print(f"function \"{cbfunc_name}\" not found!")
+            self.error(f"function \"{cbfunc_name}\" not found!")
             return -1
+
+    def is_subscribed(self, topic):
+        return self.subscriptions.get(topic) is not None
 
     # call asyncio
     def run(self):
@@ -237,7 +277,7 @@ class Node:
 
     # stops the node and unsubscribes from all topics
     def stop(self):
-        print(f"stopping {self.name} at {time.time()}")
+        self.print(f"stopping {self.name} at {time.time()}")
         self.publish("__unsub__", list(self.subscriptions.keys()))
         for process in self.processes:
             process.terminate()
@@ -249,6 +289,28 @@ class Node:
         recp = recipients if recipients else "__subs__"
         msg = json.dumps({"topic": topic, "data": data, "addr": port, "recp": recp}).encode("utf-8") + b"\n"
         self.to_send.put([msg, self.master_port])
+
+    def print(self, msg, level="INFO"):
+        levels = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
+        if level.upper() in levels:
+            self.logger.log(levels[level.upper()], msg)
+        else:
+            self.logger.log(10, msg)
+
+    def debug(self, msg):
+        self.logger.debug(msg)
+
+    def info(self, msg):
+        self.logger.info(msg)
+
+    def warning(self, msg):
+        self.logger.warning(msg)
+
+    def error(self, msg):
+        self.logger.error(msg)
+
+    def critical(self, msg):
+        self.logger.critical(msg)
 
     @subscribe("__echo__")
     def _echo(self, data, port):
@@ -264,7 +326,7 @@ class Node:
 
     @subscribe("__error__")
     def _error(self, data, port):
-        print("error decoding data!")
+        self.error("error decoding data!")
 
 
 class LocalNode(Node):
@@ -296,13 +358,13 @@ class MasterNode(Node):
             try:
                 return self.nodenames[recp]
             except KeyError:
-                print(f"node {recp} does not exist!")
+                self.warning(f"node {recp} does not exist!")
 
     # initializes the node completely (sends self subscriptions to master)
     # then starts sender and listener processes
     # finally starts the main loop of parsing information in to_process to _on_receive
     async def _run(self):
-        print(f"{self.name} has an id of {id(self)}")
+        self.print(f"{self.name} has an id of {id(self)}")
         self._add_sub()
         listener = multiprocessing.Process(target=run_io_listener, args=[self.to_process, self.recvport])
         sender = multiprocessing.Process(target=run_io_sender, args=[self.to_send, self.sendport])
@@ -325,7 +387,7 @@ class MasterNode(Node):
             if self.topics.get(topic):
                 self.publish(topic, data, port=port, recipients=self.topics[topic])
             else:
-                print(f"topic {topic} has no recipients!")
+                self.warning(f"topic {topic} has no recipients!")
             if self.subscriptions.get(topic):
                 self._callback(topic, data, port)
         elif r == "__all__":  # master only passes on the message
@@ -333,7 +395,7 @@ class MasterNode(Node):
         elif r == "__global__":
             self.publish(topic, data, port=port, recipients=self.get_all_subs())
             self._callback(topic, data, port)
-        else:
+        elif r:
             self.publish(topic, data, port=port, recipients=r)
 
     # returns all nodes that are subscribed to any topic
@@ -360,7 +422,7 @@ class MasterNode(Node):
     @subscribe("__sub__")
     def _sub(self, data, port):
         # subscriptions
-        print(f"setting up subscription data for {port}")
+        self.print(f"setting up subscription data for {port}")
         for t in data:
             try:
                 self.topics[t].append(port)
