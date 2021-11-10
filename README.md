@@ -1,12 +1,8 @@
 # simpleros
-ROS but it's (will be) a python library
+ROS but it's (will be) a python library with no external libraries
 
 
 This "library" has a similar architecture to ROS1, but the middleware layer is mostly handled by python itself. 
-
-
-## "installation"
-copy node.py 
 
 
 ## Introduction
